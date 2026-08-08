@@ -1,9 +1,9 @@
 {
-  "iconUrl": "https://raw.githubusercontent.com/Kraptor123/Cs-Karma/refs/heads/master/.github/logo/cskarma.png",
-  "name": "cs-karma",
-  "description": "Plugins Across All Categories and Languages.",
+  "iconUrl": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://cinehax.com&size=128",
+  "name": "Mi repo CineHax",
+  "description": "Repo personal con el provider de CineHax para CloudStream.",
   "manifestVersion": 1,
   "pluginLists": [
-    "https://raw.githubusercontent.com/Kraptor123/Cs-Karma/refs/heads/builds/plugins.json"
+    "https://raw.githubusercontent.com/Mielsen-hx/cinehax-cs/builds/plugins.json"
   ]
 }

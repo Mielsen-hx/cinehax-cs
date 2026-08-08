@@ -46,6 +46,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Create TMDB config
+        run: |
+          cat > $GITHUB_WORKSPACE/src/Flixlatam/src/main/kotlin/com/byayzen/TmdbConfig.kt << EOF
+          package com.byayzen
+
+          internal const val TMDB_API_KEY = "${{ secrets.TMDB_API_KEY }}"
+          EOF
+          
       - name: Build Plugins
         run: |
           cd $GITHUB_WORKSPACE/src

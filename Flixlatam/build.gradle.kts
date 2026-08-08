@@ -1,11 +1,10 @@
-// ! Bu araç @ByAyzen tarafından | @CS-Karma için yazılmıştır.
-version = 8
+version = 9
 
 cloudstream {
-    authors     = listOf("ByAyzen")
-    language    = "mx"
-    description = "Mira tus Series, Películas y Animes en Latino Online!"
-    status  = 1 // will be 3 if unspecified
-    tvTypes = listOf("Movie") //Movie, AnimeMovie, TvSeries, Cartoon, Anime, OVA, Torrent, Documentary, AsianDrama, Live, NSFW, Others, Music, AudioBook, CustomMedia, Audio, Podcast,
-    iconUrl = "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://flixlatam.com&size=128"
+    authors     = listOf("Mielsen")
+    language    = "es"
+    description = "Películas y series de CineHax, con metadata de TMDB."
+    status  = 1
+    tvTypes = listOf("Movie", "TvSeries")
+    iconUrl = "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://cinehax.com&size=128"
 }

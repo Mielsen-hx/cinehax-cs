@@ -10,7 +10,7 @@ import com.lagradost.cloudstream3.plugins.Plugin
 @CloudstreamPlugin
 class FlixlatamPlugin: Plugin() {
     override fun load() {
-        registerMainAPI(Flixlatam())
+        registerMainAPI(CineHax())
         registerExtractorAPI(FileMoon())
         registerExtractorAPI(FileMoon2())
         registerExtractorAPI(FileMoonIn())
@@ -40,5 +40,6 @@ class FlixlatamPlugin: Plugin() {
         registerExtractorAPI(Uqloadcx())
         registerExtractorAPI(Uqloadto())
         registerExtractorAPI(UqloadIo())
+        registerExtractorAPI(Minochinos())
     }
 }

@@ -229,6 +229,10 @@ class Vidspeeder : VidHidePro() {
     override var mainUrl = "https://vidspeeder.com"
 }
 
+class Minochinos : VidHidePro() {
+    override var mainUrl = "https://minochinos.com"
+}
+
 open class FilemoonV2 : ExtractorApi() {
     override var name = "Filemoon"
     override var mainUrl = "https://filemoon.to"
@@ -330,4 +334,3 @@ class FileMoonSx : FilemoonV2() {
 class Bysedikamoum : FilemoonV2() {
     override var mainUrl = "https://bysedikamoum.com"
 }
-

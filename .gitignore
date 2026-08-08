@@ -12,4 +12,7 @@
 .externalNativeBuild
 .cxx
 local.properties
-.vscodelog.txt
+.vscode
+
+# API key personal de TMDB — nunca subir
+Flixlatam/src/main/kotlin/com/byayzen/TmdbConfig.kt

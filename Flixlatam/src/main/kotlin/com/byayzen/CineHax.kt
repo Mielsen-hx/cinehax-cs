@@ -365,7 +365,9 @@ class CineHax : MainAPI() {
                                         source = "Direct",
                                         streamUrl = serverUrl,
                                         referer = fixedEmbedUrl,
-                                        headers = mapOf("Referer" to "https://unlimplay.com/")
+                                        quality = null,
+                                        headers = mapOf("Referer" to "https://unlimplay.com/"),
+                                        name = "Direct"
                                     ).forEach { collected.add(it) }
                                     true
                                 } else {

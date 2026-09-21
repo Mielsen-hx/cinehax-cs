@@ -356,11 +356,11 @@ open class StreamWishFixed : ExtractorApi() {
         val unpacked = JsUnpacker(packed).unpack() ?: return
 
         // Extraemos las variables individuales hls, hls2, hls3, hls4 que usa el sitio.
-        // Usamos una regex que no capture más de lo debido buscando hasta la comilla de cierre.
-        val hls4 = Regex("""hls4\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
-        val hls3 = Regex("""hls3\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
-        val hls2 = Regex("""hls2\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
-        val hls = Regex("""hls\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        // Solo capturamos si parecen URLs válidas (empiezan por http).
+        val hls4 = Regex("""hls4\s*:\s*"(https?://[^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls3 = Regex("""hls3\s*:\s*"(https?://[^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls2 = Regex("""hls2\s*:\s*"(https?://[^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls = Regex("""hls\s*:\s*"(https?://[^"]+)"""").find(unpacked)?.groupValues?.get(1)
 
         // Prioridad: hls4 > hls3 > hls2 > hls (siguiendo la lógica del sitio)
         val videoUrl = hls4 ?: hls3 ?: hls2 ?: hls ?: return

@@ -2,8 +2,9 @@
 package com.byayzen
 
 import com.lagradost.cloudstream3.extractors.FileMoon
-import com.lagradost.cloudstream3.extractors.StreamWishExtractor
-import com.lagradost.cloudstream3.extractors.Streamwish2
+import com.lagradost.cloudstream3.extractors.StreamTape
+import com.lagradost.cloudstream3.extractors.Voe
+import com.lagradost.cloudstream3.extractors.DoodstreamCom
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
@@ -16,8 +17,17 @@ class FlixlatamPlugin: Plugin() {
         registerExtractorAPI(FileMoonIn())
         registerExtractorAPI(FileMoonSx())
         registerExtractorAPI(Bysedikamoum())
-        registerExtractorAPI(StreamWishExtractor())
-        registerExtractorAPI(Streamwish2())
+        registerExtractorAPI(Voe())
+        registerExtractorAPI(DoodstreamCom())
+        registerExtractorAPI(StreamTape())
+        
+        // StreamWish Fix
+        registerExtractorAPI(StreamWishFixed())
+        registerExtractorAPI(EmbedWishFixed())
+        registerExtractorAPI(AwishFixed())
+        registerExtractorAPI(WishembedFixed())
+        registerExtractorAPI(GhbriskFixed())
+
         registerExtractorAPI(LulusStream())
         registerExtractorAPI(VidHidePro())
         registerExtractorAPI(VidHidePro1())
@@ -36,6 +46,7 @@ class FlixlatamPlugin: Plugin() {
         registerExtractorAPI(Vidspeeder())
         registerExtractorAPI(Travid())
         registerExtractorAPI(Moorearn())
+        registerExtractorAPI(Morencius())
         registerExtractorAPI(Uqload())
         registerExtractorAPI(Uqloadcx())
         registerExtractorAPI(Uqloadto())

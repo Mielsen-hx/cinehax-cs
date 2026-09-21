@@ -222,6 +222,9 @@ class Dintezuvio : VidHidePro() {
 class Moorearn : VidHidePro() {
     override var mainUrl = "https://moorearn.com"
 }
+class Morencius : VidHidePro() {
+    override var mainUrl = "https://morencius.com"
+}
 class Travid : VidHidePro() {
     override var mainUrl = "https://travid.pro"
 }
@@ -333,4 +336,60 @@ class FileMoonSx : FilemoonV2() {
 }
 class Bysedikamoum : FilemoonV2() {
     override var mainUrl = "https://bysedikamoum.com"
+}
+
+open class StreamWishFixed : ExtractorApi() {
+    override val name = "StreamWish"
+    override val mainUrl = "https://streamwish.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val response = app.get(url, referer = referer)
+        val packed = getPacked(response.text)
+        if (packed.isNullOrEmpty()) return
+
+        val unpacked = JsUnpacker(packed).unpack() ?: return
+
+        // Extraemos las variables individuales hls, hls2, hls3, hls4 que usa el sitio.
+        // Usamos una regex que no capture más de lo debido buscando hasta la comilla de cierre.
+        val hls4 = Regex("""hls4\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls3 = Regex("""hls3\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls2 = Regex("""hls2\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
+        val hls = Regex("""hls\s*:\s*"([^"]+)"""").find(unpacked)?.groupValues?.get(1)
+
+        // Prioridad: hls4 > hls3 > hls2 > hls (siguiendo la lógica del sitio)
+        val videoUrl = hls4 ?: hls3 ?: hls2 ?: hls ?: return
+
+        M3u8Helper.generateM3u8(
+            source = name,
+            streamUrl = videoUrl,
+            referer = url,
+            headers = mapOf("Origin" to mainUrl)
+        ).forEach(callback)
+    }
+}
+
+class EmbedWishFixed : StreamWishFixed() {
+    override val name = "EmbedWish"
+    override val mainUrl = "https://embedwish.com"
+}
+
+class AwishFixed : StreamWishFixed() {
+    override val name = "Awish"
+    override val mainUrl = "https://awish.pro"
+}
+
+class WishembedFixed : StreamWishFixed() {
+    override val name = "Wishembed"
+    override val mainUrl = "https://wishembed.pro"
+}
+
+class GhbriskFixed : StreamWishFixed() {
+    override val name = "Ghbrisk"
+    override val mainUrl = "https://ghbrisk.com"
 }

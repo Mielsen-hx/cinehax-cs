@@ -16,6 +16,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import android.util.Log
 
 class CineHax : MainAPI() {
     override var mainUrl = "https://cinehax.com"
@@ -247,39 +248,86 @@ class CineHax : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data, headers = mapOf("Referer" to mainUrl)).document
+        println("CineHax: document length: ${document.toString().length}")
 
         val embedUrl = document.selectFirst("iframe#cx-main-iframe")?.attr("data-src")
             ?: document.selectFirst("[data-url]")?.attr("data-url")
-            ?: return false
+        println("CineHax: embedUrl encontrado: $embedUrl")
+
+        if (embedUrl == null) return false
 
         val fixedEmbedUrl = fixUrlNull(embedUrl) ?: return false
+        println("CineHax: fixedEmbedUrl: $fixedEmbedUrl")
 
         // Unlimplay a veces todavía está resolviendo servidores del lado del
         // backend (PHP) cuando llega este request, y devuelve un EMBEDS vacío
         // o incompleto. Reintentamos unas cuantas veces con una pequeña espera
         // antes de darnos por vencidos.
-        var embeds: Map<String, Map<String, String>> = emptyMap()
+        val embeds = mutableMapOf<String, Map<String, String>>()
         var attempts = 0
         while (embeds.isEmpty() && attempts < 5) {
             attempts++
             val unlimplayHtml = app.get(fixedEmbedUrl, referer = data).text
-            val embedsJson = extractBalancedJson(unlimplayHtml, "const EMBEDS")
+            Log.e("CineHax", "intento $attempts - contains finalizePlayer: ${unlimplayHtml.contains("finalizePlayer(")}")
+
+            // El sitio cambió de 'const EMBEDS = {...}' a llamar a una función 'finalizePlayer({...})'.
+            // Intentamos con varios marcadores para mayor compatibilidad.
+            val embedsJson = extractBalancedJson(unlimplayHtml, "finalizePlayer(") ?:
+                             extractBalancedJson(unlimplayHtml, "const EMBEDS = {") ?:
+                             extractBalancedJson(unlimplayHtml, "const EMBEDS={")
+            Log.e("CineHax", "intento $attempts - embedsJson length: ${embedsJson?.length}")
 
             if (embedsJson != null) {
                 val rawEmbeds = tryParseJson<Map<String, Any?>>(embedsJson)
+                Log.e("CineHax", "intento $attempts - rawEmbeds parsed: ${rawEmbeds != null}, keys: ${rawEmbeds?.keys}")
                 if (rawEmbeds != null) {
                     // Parseo defensivo: descarta cualquier clave que no sea un
-                    // mapa de idioma -> servidores (por ej. "searched_names",
-                    // que es un array y rompía el parseo estricto anterior).
-                    embeds = rawEmbeds.mapNotNull { (lang, value) ->
-                        val serverMap = value as? Map<*, *> ?: return@mapNotNull null
+                    // mapa de idioma -> servidores
+                    rawEmbeds.forEach { (l, v) ->
+                        val lang = l
+                        val serverMap = v as? Map<*, *> ?: return@forEach
                         val filtered = serverMap.entries.mapNotNull { (k, v) ->
                             val key = k as? String ?: return@mapNotNull null
                             val srvUrl = v as? String ?: return@mapNotNull null
                             key to srvUrl
                         }.toMap()
-                        if (filtered.isEmpty()) null else lang to filtered
-                    }.toMap()
+                        if (filtered.isNotEmpty()) {
+                            embeds[lang] = filtered
+                        }
+                    }
+
+                    // Intenta cargar servidores extra de "SoloLatino" (_sl=1)
+                    val slId = Regex("""const _SL_ID\s*=\s*"(.*?)"""").find(unlimplayHtml)?.groupValues?.get(1)
+                    if (!slId.isNullOrEmpty()) {
+                        val slTitle = Regex("""const _SL_TITLE\s*=\s*"(.*?)"""").find(unlimplayHtml)?.groupValues?.get(1) ?: ""
+                        val slSeason = Regex("""const _SL_SEASON\s*=\s*(\d+)""").find(unlimplayHtml)?.groupValues?.get(1)
+                        val slEp = Regex("""const _SL_EP\s*=\s*(\d+)""").find(unlimplayHtml)?.groupValues?.get(1)
+                        
+                        val encodedTitle = URLEncoder.encode(slTitle, "UTF-8")
+                        val slUrl = "$fixedEmbedUrl?_sl=1&ID=$slId&title=$encodedTitle" +
+                                    (if (slSeason != null) "&season=$slSeason" else "") +
+                                    (if (slEp != null) "&episode=$slEp" else "")
+                        
+                        runCatching {
+                            val slResponse = app.get(slUrl, referer = fixedEmbedUrl).text
+                            val slData = tryParseJson<Map<String, Any?>>(slResponse)
+                            val slEmbeds = slData?.get("embeds") as? Map<*, *>
+                            slEmbeds?.forEach { (l, v) ->
+                                val lang = l as? String ?: return@forEach
+                                val serverMap = v as? Map<*, *> ?: return@forEach
+                                val currentServers = embeds[lang]?.toMutableMap() ?: mutableMapOf()
+                                serverMap.forEach { (sk, sv) ->
+                                    val sName = sk as? String ?: return@forEach
+                                    val sUrl = sv as? String ?: return@forEach
+                                    if (!currentServers.containsKey(sName)) {
+                                        currentServers[sName] = sUrl
+                                    }
+                                }
+                                embeds[lang] = currentServers
+                            }
+                        }
+                    }
+                    Log.e("CineHax", "intento $attempts - embeds final size: ${embeds.size}")
                 }
             }
 
@@ -310,8 +358,20 @@ class CineHax : MainAPI() {
                                 // loadExtractor recibe un callback NO-suspend, así que acá
                                 // solo juntamos los links tal cual, sin tocarlos.
                                 val collected = mutableListOf<ExtractorLink>()
-                                val ok = loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
-                                    collected.add(link)
+                                
+                                // Manejo manual para links directos (vimeos u otros m3u8)
+                                val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
+                                    M3u8Helper.generateM3u8(
+                                        source = "Direct",
+                                        streamUrl = serverUrl,
+                                        referer = fixedEmbedUrl,
+                                        headers = mapOf("Referer" to "https://unlimplay.com/")
+                                    ).forEach { collected.add(it) }
+                                    true
+                                } else {
+                                    loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
+                                        collected.add(link)
+                                    }
                                 }
                                 // Recién acá (ya de vuelta en contexto suspend) los
                                 // renombramos con la etiqueta de idioma y los entregamos.
@@ -348,20 +408,30 @@ class CineHax : MainAPI() {
     }
 
     private fun extractBalancedJson(html: String, marker: String): String? {
-        val markerIndex = html.indexOf(marker)
-        if (markerIndex == -1) return null
-        val braceStart = html.indexOf("{", markerIndex)
-        if (braceStart == -1) return null
-
-        var depth = 0
-        for (i in braceStart until html.length) {
-            when (html[i]) {
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return html.substring(braceStart, i + 1)
+        var markerIndex = html.indexOf(marker)
+        // Buscamos todas las ocurrencias del marcador, por si la primera está en un string/comentario
+        while (markerIndex != -1) {
+            val braceStart = html.indexOf("{", markerIndex)
+            if (braceStart != -1) {
+                var depth = 0
+                for (i in braceStart until html.length) {
+                    when (html[i]) {
+                        '{' -> depth++
+                        '}' -> {
+                            depth--
+                            if (depth == 0) {
+                                val json = html.substring(braceStart, i + 1)
+                                // Validación rápida: si no se parsea como JSON básico, seguimos buscando
+                                if (json.contains(":") && (json.contains("latino") || json.contains("español") || json.contains("castellano") || json.contains("subtitulado"))) {
+                                    return json
+                                }
+                                break // Sale del for, intenta siguiente markerIndex
+                            }
+                        }
+                    }
                 }
             }
+            markerIndex = html.indexOf(marker, markerIndex + marker.length)
         }
         return null
     }

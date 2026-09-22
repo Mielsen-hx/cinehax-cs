@@ -57,8 +57,9 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :Flixlatam:make makePluginsJson --no-daemon
+          mkdir -p out
           find . -name "*.cs3" -exec cp {} out/ \;
-          cp build/plugins.json out/ || true
+          find build -name "plugins.json" -exec cp {} out/ \;
           ls -R out/
 
       - name: Push builds

@@ -14,7 +14,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import android.util.Log
@@ -355,51 +354,47 @@ class CineHax : MainAPI() {
             allTasks.map { (lang, name, serverUrl) ->
                 async {
                     semaphore.withPermit {
-                        // Si un servidor individual se cuelga o tarda demasiado, no debe
-                        // bloquear la carga de los demás — lo cortamos a los 8s.
-                        withTimeoutOrNull(8_000L) {
-                            runCatching {
-                                val collected = mutableListOf<ExtractorLink>()
+                        runCatching {
+                            val collected = mutableListOf<ExtractorLink>()
 
-                                // Manejo manual para links directos (vimeos u otros m3u8)
-                                val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
-                                    M3u8Helper.generateM3u8(
-                                        source = "Direct",
-                                        streamUrl = serverUrl,
-                                        referer = fixedEmbedUrl,
-                                        quality = null,
-                                        headers = mapOf("Referer" to "https://unlimplay.com/"),
-                                        name = "Direct"
-                                    ).forEach { collected.add(it) }
-                                    collected.isNotEmpty()
-                                } else {
-                                    loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
-                                        collected.add(link)
-                                    }
+                            // Manejo manual para links directos (vimeos u otros m3u8)
+                            val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
+                                M3u8Helper.generateM3u8(
+                                    source = "Direct",
+                                    streamUrl = serverUrl,
+                                    referer = fixedEmbedUrl,
+                                    quality = null,
+                                    headers = mapOf("Referer" to "https://unlimplay.com/"),
+                                    name = "Direct"
+                                ).forEach { collected.add(it) }
+                                collected.isNotEmpty()
+                            } else {
+                                loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
+                                    collected.add(link)
                                 }
+                            }
 
-                                // Entregamos los links encontrados con su etiqueta de idioma,
-                                // sumando el bonus de calidad según el idioma para que Cloudstream
-                                // priorice Latino > Español/Castellano > Subtitulado en el reproductor.
-                                // Se clampea a 0 antes de sumar por si el extractor devolvió
-                                // Qualities.Unknown.value (-1), para no arrastrar ese negativo.
-                                collected.forEach { link ->
-                                    val safeQuality = if (link.quality < 0) 0 else link.quality
-                                    val renamed = newExtractorLink(
-                                        source = link.source,
-                                        name = "${link.name} ${langLabel(lang)}",
-                                        url = link.url,
-                                        type = link.type
-                                    ) {
-                                        this.referer = link.referer
-                                        this.quality = safeQuality + langQualityBonus(lang)
-                                        this.headers = link.headers
-                                    }
-                                    callback(renamed)
+                            // Entregamos los links encontrados con su etiqueta de idioma,
+                            // sumando el bonus de calidad según el idioma para que Cloudstream
+                            // priorice Latino > Español/Castellano > Subtitulado en el reproductor.
+                            // Se clampea a 0 antes de sumar por si el extractor devolvió
+                            // Qualities.Unknown.value (-1), para no arrastrar ese negativo.
+                            collected.forEach { link ->
+                                val safeQuality = if (link.quality < 0) 0 else link.quality
+                                val renamed = newExtractorLink(
+                                    source = link.source,
+                                    name = "${link.name} ${langLabel(lang)}",
+                                    url = link.url,
+                                    type = link.type
+                                ) {
+                                    this.referer = link.referer
+                                    this.quality = safeQuality + langQualityBonus(lang)
+                                    this.headers = link.headers
                                 }
-                                ok && collected.isNotEmpty()
-                            }.getOrDefault(false)
-                        } ?: false
+                                callback(renamed)
+                            }
+                            ok && collected.isNotEmpty()
+                        }.getOrDefault(false)
                     }
                 }
             }.awaitAll().any { it }

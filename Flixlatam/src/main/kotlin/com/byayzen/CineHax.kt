@@ -14,6 +14,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import android.util.Log
@@ -248,16 +249,16 @@ class CineHax : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data, headers = mapOf("Referer" to mainUrl)).document
-        println("CineHax: document length: ${document.toString().length}")
 
         val embedUrl = document.selectFirst("iframe#cx-main-iframe")?.attr("data-src")
             ?: document.selectFirst("[data-url]")?.attr("data-url")
-        println("CineHax: embedUrl encontrado: $embedUrl")
 
-        if (embedUrl == null) return false
+        if (embedUrl == null) {
+            Log.d("CineHax", "no se encontró embedUrl en la página de CineHax")
+            return false
+        }
 
         val fixedEmbedUrl = fixUrlNull(embedUrl) ?: return false
-        println("CineHax: fixedEmbedUrl: $fixedEmbedUrl")
 
         // Unlimplay a veces todavía está resolviendo servidores del lado del
         // backend (PHP) cuando llega este request, y devuelve un EMBEDS vacío
@@ -268,18 +269,15 @@ class CineHax : MainAPI() {
         while (embeds.isEmpty() && attempts < 5) {
             attempts++
             val unlimplayHtml = app.get(fixedEmbedUrl, referer = data).text
-            Log.e("CineHax", "intento $attempts - contains finalizePlayer: ${unlimplayHtml.contains("finalizePlayer(")}")
 
             // El sitio cambió de 'const EMBEDS = {...}' a llamar a una función 'finalizePlayer({...})'.
             // Intentamos con varios marcadores para mayor compatibilidad.
             val embedsJson = extractBalancedJson(unlimplayHtml, "finalizePlayer(") ?:
-                             extractBalancedJson(unlimplayHtml, "const EMBEDS = {") ?:
-                             extractBalancedJson(unlimplayHtml, "const EMBEDS={")
-            Log.e("CineHax", "intento $attempts - embedsJson length: ${embedsJson?.length}")
+            extractBalancedJson(unlimplayHtml, "const EMBEDS = {") ?:
+            extractBalancedJson(unlimplayHtml, "const EMBEDS={")
 
             if (embedsJson != null) {
                 val rawEmbeds = tryParseJson<Map<String, Any?>>(embedsJson)
-                Log.e("CineHax", "intento $attempts - rawEmbeds parsed: ${rawEmbeds != null}, keys: ${rawEmbeds?.keys}")
                 if (rawEmbeds != null) {
                     // Parseo defensivo: descarta cualquier clave que no sea un
                     // mapa de idioma -> servidores
@@ -302,12 +300,12 @@ class CineHax : MainAPI() {
                         val slTitle = Regex("""const _SL_TITLE\s*=\s*"(.*?)"""").find(unlimplayHtml)?.groupValues?.get(1) ?: ""
                         val slSeason = Regex("""const _SL_SEASON\s*=\s*(\d+)""").find(unlimplayHtml)?.groupValues?.get(1)
                         val slEp = Regex("""const _SL_EP\s*=\s*(\d+)""").find(unlimplayHtml)?.groupValues?.get(1)
-                        
+
                         val encodedTitle = URLEncoder.encode(slTitle, "UTF-8")
                         val slUrl = "$fixedEmbedUrl?_sl=1&ID=$slId&title=$encodedTitle" +
-                                    (if (slSeason != null) "&season=$slSeason" else "") +
-                                    (if (slEp != null) "&episode=$slEp" else "")
-                        
+                                (if (slSeason != null) "&season=$slSeason" else "") +
+                                (if (slEp != null) "&episode=$slEp" else "")
+
                         runCatching {
                             val slResponse = app.get(slUrl, referer = fixedEmbedUrl).text
                             val slData = tryParseJson<Map<String, Any?>>(slResponse)
@@ -327,68 +325,81 @@ class CineHax : MainAPI() {
                             }
                         }
                     }
-                    Log.e("CineHax", "intento $attempts - embeds final size: ${embeds.size}")
                 }
             }
 
-            if (embeds.isEmpty() && attempts < 5) delay(700)
+            if (embeds.isEmpty() && attempts < 5) {
+                Log.d("CineHax", "intento $attempts sin embeds, reintentando")
+                delay(700)
+            }
         }
 
         if (embeds.isEmpty()) return false
 
-        // Prioriza doblaje en español; si un idioma completo falla, recién
-        // ahí se pasa al siguiente. Dentro de un mismo idioma, los servidores
-        // se resuelven en paralelo (semaphore de 4) para que sea rápido.
-        val langOrder = listOf("latino", "español", "castellano", "subtitulado")
-        
+        // Todos los servidores, de todos los idiomas, se resuelven en paralelo (no hay
+        // fallback secuencial por idioma): prioriza velocidad sobre ahorro de requests.
+        // El límite de concurrencia real lo pone este semaphore.
         val semaphore = Semaphore(15)
-        
-        // Juntamos todos los servidores de todos los idiomas para procesarlos en paralelo.
-        // Esto evita que un servidor lento en un idioma bloquee a los demás.
+
+        // Juntamos todos los servidores de todos los idiomas para procesarlos en paralelo,
+        // ordenados por prioridad de idioma (latino primero). El orden de lanzamiento no
+        // garantiza el orden de llegada al callback (corren en paralelo), así que la
+        // prioridad real se aplica más abajo sumando un bonus a `quality`: eso es lo que
+        // efectivamente hace que Cloudstream elija Latino cuando hay un empate de calidad
+        // (ej. 1080p Latino vs 1080p Subtitulado).
         val allTasks = embeds.flatMap { (lang, servers) ->
             servers.map { (name, url) -> Triple(lang, name, url) }
-        }
+        }.sortedBy { (lang, _, _) -> langPriority(lang) }
 
         val anySuccess = coroutineScope {
             allTasks.map { (lang, name, serverUrl) ->
                 async {
                     semaphore.withPermit {
-                        runCatching {
-                            val collected = mutableListOf<ExtractorLink>()
-                            
-                            // Manejo manual para links directos (vimeos u otros m3u8)
-                            val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
-                                M3u8Helper.generateM3u8(
-                                    source = "Direct",
-                                    streamUrl = serverUrl,
-                                    referer = fixedEmbedUrl,
-                                    quality = null,
-                                    headers = mapOf("Referer" to "https://unlimplay.com/"),
-                                    name = "Direct"
-                                ).forEach { collected.add(it) }
-                                collected.isNotEmpty()
-                            } else {
-                                loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
-                                    collected.add(link)
-                                }
-                            }
+                        // Si un servidor individual se cuelga o tarda demasiado, no debe
+                        // bloquear la carga de los demás — lo cortamos a los 8s.
+                        withTimeoutOrNull(8_000L) {
+                            runCatching {
+                                val collected = mutableListOf<ExtractorLink>()
 
-                            // Entregamos los links encontrados con su etiqueta de idioma
-                            collected.forEach { link ->
-                                val renamed = newExtractorLink(
-                                    source = link.source,
-                                    name = "${link.name} ${langLabel(lang)}",
-                                    url = link.url,
-                                    type = link.type
-                                ) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
+                                // Manejo manual para links directos (vimeos u otros m3u8)
+                                val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
+                                    M3u8Helper.generateM3u8(
+                                        source = "Direct",
+                                        streamUrl = serverUrl,
+                                        referer = fixedEmbedUrl,
+                                        quality = null,
+                                        headers = mapOf("Referer" to "https://unlimplay.com/"),
+                                        name = "Direct"
+                                    ).forEach { collected.add(it) }
+                                    collected.isNotEmpty()
+                                } else {
+                                    loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
+                                        collected.add(link)
+                                    }
                                 }
-                                callback(renamed)
-                            }
-                            ok && collected.isNotEmpty()
-                        }.getOrDefault(false)
+
+                                // Entregamos los links encontrados con su etiqueta de idioma,
+                                // sumando el bonus de calidad según el idioma para que Cloudstream
+                                // priorice Latino > Español/Castellano > Subtitulado en el reproductor.
+                                // Se clampea a 0 antes de sumar por si el extractor devolvió
+                                // Qualities.Unknown.value (-1), para no arrastrar ese negativo.
+                                collected.forEach { link ->
+                                    val safeQuality = if (link.quality < 0) 0 else link.quality
+                                    val renamed = newExtractorLink(
+                                        source = link.source,
+                                        name = "${link.name} ${langLabel(lang)}",
+                                        url = link.url,
+                                        type = link.type
+                                    ) {
+                                        this.referer = link.referer
+                                        this.quality = safeQuality + langQualityBonus(lang)
+                                        this.headers = link.headers
+                                    }
+                                    callback(renamed)
+                                }
+                                ok && collected.isNotEmpty()
+                            }.getOrDefault(false)
+                        } ?: false
                     }
                 }
             }.awaitAll().any { it }
@@ -402,6 +413,24 @@ class CineHax : MainAPI() {
         "español", "castellano" -> "[CAST]"
         "subtitulado" -> "[SUB-ENG]"
         else -> "[${lang.uppercase()}]"
+    }
+
+    // Orden de prioridad por idioma: menor valor = mayor prioridad.
+    private fun langPriority(lang: String): Int = when (lang.lowercase()) {
+        "latino" -> 0
+        "español", "castellano" -> 1
+        "subtitulado" -> 2
+        else -> 3
+    }
+
+    // Bonus sumado a `quality` según el idioma. Al ser mayor que la diferencia típica
+    // entre escalones de calidad consecutivos que CloudStream trata como "empate"
+    // (ej. mismos 1080p en dos servidores distintos), esto asegura que Latino quede
+    // por encima de Subtitulado en el reproductor cuando ambos tienen la misma calidad.
+    private fun langQualityBonus(lang: String): Int = when (lang.lowercase()) {
+        "latino" -> 5
+        "español", "castellano" -> 2
+        else -> 0
     }
 
     private fun extractBalancedJson(html: String, marker: String): String? {

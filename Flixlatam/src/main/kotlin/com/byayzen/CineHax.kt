@@ -340,63 +340,58 @@ class CineHax : MainAPI() {
         // ahí se pasa al siguiente. Dentro de un mismo idioma, los servidores
         // se resuelven en paralelo (semaphore de 4) para que sea rápido.
         val langOrder = listOf("latino", "español", "castellano", "subtitulado")
-        val orderedLangs = embeds.keys.sortedBy { lang ->
-            langOrder.indexOfFirst { it.equals(lang, ignoreCase = true) }
-                .let { if (it == -1) langOrder.size else it }
+        
+        val semaphore = Semaphore(15)
+        
+        // Juntamos todos los servidores de todos los idiomas para procesarlos en paralelo.
+        // Esto evita que un servidor lento en un idioma bloquee a los demás.
+        val allTasks = embeds.flatMap { (lang, servers) ->
+            servers.map { (name, url) -> Triple(lang, name, url) }
         }
 
-        val semaphore = Semaphore(4)
-        var anySuccess = false
+        val anySuccess = coroutineScope {
+            allTasks.map { (lang, name, serverUrl) ->
+                async {
+                    semaphore.withPermit {
+                        runCatching {
+                            val collected = mutableListOf<ExtractorLink>()
+                            
+                            // Manejo manual para links directos (vimeos u otros m3u8)
+                            val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
+                                M3u8Helper.generateM3u8(
+                                    source = "Direct",
+                                    streamUrl = serverUrl,
+                                    referer = fixedEmbedUrl,
+                                    quality = null,
+                                    headers = mapOf("Referer" to "https://unlimplay.com/"),
+                                    name = "Direct"
+                                ).forEach { collected.add(it) }
+                                collected.isNotEmpty()
+                            } else {
+                                loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
+                                    collected.add(link)
+                                }
+                            }
 
-        for (lang in orderedLangs) {
-            val servers = embeds[lang] ?: continue
-            val results = coroutineScope {
-                servers.values.map { serverUrl ->
-                    async {
-                        semaphore.withPermit {
-                            runCatching {
-                                // loadExtractor recibe un callback NO-suspend, así que acá
-                                // solo juntamos los links tal cual, sin tocarlos.
-                                val collected = mutableListOf<ExtractorLink>()
-                                
-                                // Manejo manual para links directos (vimeos u otros m3u8)
-                                val ok = if (serverUrl.contains("vimeos.") || serverUrl.contains(".m3u8") || serverUrl.contains(".txt")) {
-                                    M3u8Helper.generateM3u8(
-                                        source = "Direct",
-                                        streamUrl = serverUrl,
-                                        referer = fixedEmbedUrl,
-                                        quality = null,
-                                        headers = mapOf("Referer" to "https://unlimplay.com/"),
-                                        name = "Direct"
-                                    ).forEach { collected.add(it) }
-                                    true
-                                } else {
-                                    loadExtractor(serverUrl, fixedEmbedUrl, subtitleCallback) { link ->
-                                        collected.add(link)
-                                    }
+                            // Entregamos los links encontrados con su etiqueta de idioma
+                            collected.forEach { link ->
+                                val renamed = newExtractorLink(
+                                    source = link.source,
+                                    name = "${link.name} ${langLabel(lang)}",
+                                    url = link.url,
+                                    type = link.type
+                                ) {
+                                    this.referer = link.referer
+                                    this.quality = link.quality
+                                    this.headers = link.headers
                                 }
-                                // Recién acá (ya de vuelta en contexto suspend) los
-                                // renombramos con la etiqueta de idioma y los entregamos.
-                                collected.forEach { link ->
-                                    val renamed = newExtractorLink(
-                                        source = link.source,
-                                        name = "${link.name} ${langLabel(lang)}",
-                                        url = link.url,
-                                        type = link.type
-                                    ) {
-                                        this.referer = link.referer
-                                        this.quality = link.quality
-                                        this.headers = link.headers
-                                    }
-                                    callback(renamed)
-                                }
-                                ok
-                            }.getOrDefault(false)
-                        }
+                                callback(renamed)
+                            }
+                            ok && collected.isNotEmpty()
+                        }.getOrDefault(false)
                     }
-                }.awaitAll()
-            }
-            if (results.any { it }) anySuccess = true
+                }
+            }.awaitAll().any { it }
         }
 
         return anySuccess

@@ -20,7 +20,7 @@ import android.util.Log
 
 class CineHax : MainAPI() {
     override var mainUrl = "https://cinehax.com"
-    override var name = "CineHax"
+    override var name = "CineHax" // Trigger build 10
     override val hasMainPage = true
     override var lang = "es"
     override val hasQuickSearch = false
